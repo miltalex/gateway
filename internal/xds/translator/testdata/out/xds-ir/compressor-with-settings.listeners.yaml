@@ -15,7 +15,7 @@
           maxConcurrentStreams: 100
         httpFilters:
         - disabled: true
-          name: envoy.filters.http.compressor.brotli/1bfd081b
+          name: envoy.filters.http.compressor.brotli/911767550f9f36f5
           typedConfig:
             '@type': type.googleapis.com/envoy.extensions.filters.http.compressor.v3.Compressor
             compressorLibrary:
@@ -32,7 +32,7 @@
               commonConfig:
                 minContentLength: 100
         - disabled: true
-          name: envoy.filters.http.compressor.gzip/3c99d23c
+          name: envoy.filters.http.compressor.gzip/5ee8469d229b6408
           typedConfig:
             '@type': type.googleapis.com/envoy.extensions.filters.http.compressor.v3.Compressor
             compressorLibrary:
@@ -48,7 +48,7 @@
               commonConfig:
                 minContentLength: 200
         - disabled: true
-          name: envoy.filters.http.compressor.zstd/a5a075d9
+          name: envoy.filters.http.compressor.zstd/815a4e66d9082205
           typedConfig:
             '@type': type.googleapis.com/envoy.extensions.filters.http.compressor.v3.Compressor
             compressorLibrary:

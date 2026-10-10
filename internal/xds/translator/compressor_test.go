@@ -84,7 +84,7 @@ func TestBuildCompressorFilter(t *testing.T) {
 				Type:             egv1a1.GzipCompressorType,
 				MinContentLength: new(uint32(1024)),
 			},
-			expectedName:    "envoy.filters.http.compressor.gzip/2ee8b42b",
+			expectedName:    "envoy.filters.http.compressor.gzip/f3ebeba462b1d8a3",
 			expectedExtName: "envoy.compression.gzip.compressor",
 			validateProto: func(t *testing.T, c *compressorv3.Compressor) {
 				require.NotNil(t, c.ResponseDirectionConfig)
@@ -100,7 +100,7 @@ func TestBuildCompressorFilter(t *testing.T) {
 				ChooseFirst:      true,
 				MinContentLength: new(uint32(2048)),
 			},
-			expectedName:    "envoy.filters.http.compressor.brotli/2965facd",
+			expectedName:    "envoy.filters.http.compressor.brotli/223c461d26a03cff",
 			expectedExtName: "envoy.compression.brotli.compressor",
 			validateProto: func(t *testing.T, c *compressorv3.Compressor) {
 				assert.True(t, c.ChooseFirst)
@@ -120,7 +120,7 @@ func TestBuildCompressorFilter(t *testing.T) {
 					ChunkSize:           new(uint32(8192)),
 				},
 			},
-			expectedName:    "envoy.filters.http.compressor.gzip/fcbb148f",
+			expectedName:    "envoy.filters.http.compressor.gzip/35a789a3bcb217b2",
 			expectedExtName: "envoy.compression.gzip.compressor",
 			validateProto: func(t *testing.T, c *compressorv3.Compressor) {
 				gzip := &gzipv3.Gzip{}
@@ -145,7 +145,7 @@ func TestBuildCompressorFilter(t *testing.T) {
 					DisableLiteralContextModeling: new(true),
 				},
 			},
-			expectedName:    "envoy.filters.http.compressor.brotli/e3c96b84",
+			expectedName:    "envoy.filters.http.compressor.brotli/866b53cec25e97f4",
 			expectedExtName: "envoy.compression.brotli.compressor",
 			validateProto: func(t *testing.T, c *compressorv3.Compressor) {
 				brotli := &brotliv3.Brotli{}
@@ -169,7 +169,7 @@ func TestBuildCompressorFilter(t *testing.T) {
 					ChunkSize:        new(uint32(65536)),
 				},
 			},
-			expectedName:    "envoy.filters.http.compressor.zstd/b29b3f6f",
+			expectedName:    "envoy.filters.http.compressor.zstd/1ee10eb62cad9097",
 			expectedExtName: "envoy.compression.zstd.compressor",
 			validateProto: func(t *testing.T, c *compressorv3.Compressor) {
 				zstd := &zstdv3.Zstd{}
@@ -188,7 +188,7 @@ func TestBuildCompressorFilter(t *testing.T) {
 					Quality: new(uint32(11)),
 				},
 			},
-			expectedName:    "envoy.filters.http.compressor.gzip/f55d6fbc",
+			expectedName:    "envoy.filters.http.compressor.gzip",
 			expectedExtName: "envoy.compression.gzip.compressor",
 			validateProto: func(t *testing.T, c *compressorv3.Compressor) {
 				gzip := &gzipv3.Gzip{}
@@ -279,7 +279,7 @@ func TestCompressorFilterName(t *testing.T) {
 		{
 			name:        "custom gzip",
 			compression: gzipCompression,
-			want:        "envoy.filters.http.compressor.gzip/7a9fd8cc",
+			want:        "envoy.filters.http.compressor.gzip/c49cc10450efdfa1",
 		},
 		{
 			name: "min content length",
@@ -287,28 +287,20 @@ func TestCompressorFilterName(t *testing.T) {
 				Type:             egv1a1.GzipCompressorType,
 				MinContentLength: new(uint32(1024)),
 			},
-			want: "envoy.filters.http.compressor.gzip/2ee8b42b",
+			want: "envoy.filters.http.compressor.gzip/f3ebeba462b1d8a3",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := compressorFilterName(tt.compression)
-			require.NoError(t, err)
-			assert.Equal(t, tt.want, got)
+			assert.Equal(t, tt.want, compressorFilterName(tt.compression))
 		})
 	}
 
-	customName, err := compressorFilterName(gzipCompression)
-	require.NoError(t, err)
+	customName := compressorFilterName(gzipCompression)
 	assert.True(t, strings.HasPrefix(customName, "envoy.filters.http.compressor.gzip/"))
-	assert.Len(t, strings.TrimPrefix(customName, "envoy.filters.http.compressor.gzip/"), 8)
+	assert.Len(t, strings.TrimPrefix(customName, "envoy.filters.http.compressor.gzip/"), 16)
 
-	identicalName, err := compressorFilterName(identicalGzipCompression)
-	require.NoError(t, err)
-	assert.Equal(t, customName, identicalName)
-
-	differentName, err := compressorFilterName(differentGzipCompression)
-	require.NoError(t, err)
-	assert.NotEqual(t, customName, differentName)
+	assert.Equal(t, customName, compressorFilterName(identicalGzipCompression))
+	assert.NotEqual(t, customName, compressorFilterName(differentGzipCompression))
 }

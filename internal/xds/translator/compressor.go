@@ -51,10 +51,7 @@ func (*compressor) patchHCM(mgr *hcmv3.HttpConnectionManager, irListener *ir.HTT
 	for _, route := range irListener.Routes {
 		if route.Traffic != nil && route.Traffic.Compression != nil {
 			for _, irComp := range route.Traffic.Compression {
-				filterName, err := compressorFilterName(irComp)
-				if err != nil {
-					return err
-				}
+				filterName := compressorFilterName(irComp)
 				if !hcmContainsFilter(mgr, filterName) {
 					filter, err := buildCompressorFilter(irComp)
 					if err != nil {
@@ -69,24 +66,67 @@ func (*compressor) patchHCM(mgr *hcmv3.HttpConnectionManager, irListener *ir.HTT
 	return nil
 }
 
-func compressorFilterName(compression *ir.Compression) (string, error) {
+// compressorFilterName returns the name of the compressor filter for the given
+// compression config. When the compressor only uses Envoy's default settings the
+// stable, bare name (for example envoy.filters.http.compressor.gzip) is used so
+// that existing configurations keep the same filter names on upgrade. When the
+// user configures non-default settings, a digest of those user-facing settings is
+// appended so that different settings on the same listener do not collapse into a
+// single filter.
+func compressorFilterName(compression *ir.Compression) string {
 	filterName := fmt.Sprintf("%s.%s", egv1a1.EnvoyFilterCompressor.String(), strings.ToLower(string(compression.Type)))
 	if !hasCustomCompressorSettings(compression) {
-		return filterName, nil
+		return filterName
 	}
 
-	compressionJSON, err := json.Marshal(compression)
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("%s/%s", filterName, utils.Digest32(string(compressionJSON))), nil
+	return fmt.Sprintf("%s/%s", filterName, utils.Digest256(compressorSettingsKey(compression))[:16])
 }
 
+// compressorSettingsKey returns a stable, canonical representation of the
+// user-facing compressor settings. It deliberately only includes the settings
+// exposed through the API so that internal IR fields do not affect the digest.
+func compressorSettingsKey(compression *ir.Compression) string {
+	settings := struct {
+		MinContentLength *uint32                  `json:"minContentLength,omitempty"`
+		Gzip             *egv1a1.GzipCompressor   `json:"gzip,omitempty"`
+		Brotli           *egv1a1.BrotliCompressor `json:"brotli,omitempty"`
+		Zstd             *egv1a1.ZstdCompressor   `json:"zstd,omitempty"`
+	}{
+		MinContentLength: compression.MinContentLength,
+		Gzip:             compression.Gzip,
+		Brotli:           compression.Brotli,
+		Zstd:             compression.Zstd,
+	}
+
+	key, _ := json.Marshal(settings)
+	return string(key)
+}
+
+// hasCustomCompressorSettings reports whether the user actually configured any
+// non-default compressor setting. Merely providing an empty settings block (for
+// example `gzip: {}`) must not change the filter name.
 func hasCustomCompressorSettings(compression *ir.Compression) bool {
-	return compression.MinContentLength != nil ||
-		compression.Gzip != nil ||
-		compression.Brotli != nil ||
-		compression.Zstd != nil
+	if compression.MinContentLength != nil {
+		return true
+	}
+
+	switch compression.Type {
+	case egv1a1.GzipCompressorType:
+		gzip := compression.Gzip
+		return gzip != nil && (gzip.CompressionLevel != nil || gzip.CompressionStrategy != nil ||
+			gzip.MemoryLevel != nil || gzip.WindowBits != nil || gzip.ChunkSize != nil)
+	case egv1a1.BrotliCompressorType:
+		brotli := compression.Brotli
+		return brotli != nil && (brotli.Quality != nil || brotli.EncoderMode != nil ||
+			brotli.WindowBits != nil || brotli.InputBlockBits != nil || brotli.ChunkSize != nil ||
+			brotli.DisableLiteralContextModeling != nil)
+	case egv1a1.ZstdCompressorType:
+		zstd := compression.Zstd
+		return zstd != nil && (zstd.CompressionLevel != nil || zstd.EnableChecksum != nil ||
+			zstd.Strategy != nil || zstd.ChunkSize != nil)
+	}
+
+	return false
 }
 
 // buildCompressorFilter builds a compressor filter with the provided compressionType.
@@ -103,13 +143,19 @@ func buildCompressorFilter(compression *ir.Compression) (*hcmv3.HttpFilter, erro
 	switch compression.Type {
 	case egv1a1.BrotliCompressorType:
 		extensionName = "envoy.compression.brotli.compressor"
-		extensionMsg = buildBrotliProto(compression.Brotli)
+		if extensionMsg, err = buildBrotliProto(compression.Brotli); err != nil {
+			return nil, err
+		}
 	case egv1a1.GzipCompressorType:
 		extensionName = "envoy.compression.gzip.compressor"
-		extensionMsg = buildGzipProto(compression.Gzip)
+		if extensionMsg, err = buildGzipProto(compression.Gzip); err != nil {
+			return nil, err
+		}
 	case egv1a1.ZstdCompressorType:
 		extensionName = "envoy.compression.zstd.compressor"
-		extensionMsg = buildZstdProto(compression.Zstd)
+		if extensionMsg, err = buildZstdProto(compression.Zstd); err != nil {
+			return nil, err
+		}
 	}
 
 	if extensionAny, err = proto.ToAnyWithValidation(extensionMsg); err != nil {
@@ -139,13 +185,8 @@ func buildCompressorFilter(compression *ir.Compression) (*hcmv3.HttpFilter, erro
 		return nil, err
 	}
 
-	filterName, err := compressorFilterName(compression)
-	if err != nil {
-		return nil, err
-	}
-
 	return &hcmv3.HttpFilter{
-		Name: filterName,
+		Name: compressorFilterName(compression),
 		ConfigType: &hcmv3.HttpFilter_TypedConfig{
 			TypedConfig: compressorAny,
 		},
@@ -162,10 +203,10 @@ var gzipCompressionStrategies = map[egv1a1.GzipCompressionStrategy]gzipv3.Gzip_C
 }
 
 // buildGzipProto builds the Gzip compressor library config from the API config.
-func buildGzipProto(gzip *egv1a1.GzipCompressor) *gzipv3.Gzip {
+func buildGzipProto(gzip *egv1a1.GzipCompressor) (*gzipv3.Gzip, error) {
 	gzipProto := &gzipv3.Gzip{}
 	if gzip == nil {
-		return gzipProto
+		return gzipProto, nil
 	}
 
 	if gzip.CompressionLevel != nil {
@@ -174,7 +215,11 @@ func buildGzipProto(gzip *egv1a1.GzipCompressor) *gzipv3.Gzip {
 		gzipProto.CompressionLevel = gzipv3.Gzip_CompressionLevel(*gzip.CompressionLevel)
 	}
 	if gzip.CompressionStrategy != nil {
-		gzipProto.CompressionStrategy = gzipCompressionStrategies[*gzip.CompressionStrategy]
+		strategy, ok := gzipCompressionStrategies[*gzip.CompressionStrategy]
+		if !ok {
+			return nil, fmt.Errorf("unknown gzip compression strategy: %q", *gzip.CompressionStrategy)
+		}
+		gzipProto.CompressionStrategy = strategy
 	}
 	if gzip.MemoryLevel != nil {
 		gzipProto.MemoryLevel = wrapperspb.UInt32(*gzip.MemoryLevel)
@@ -186,7 +231,7 @@ func buildGzipProto(gzip *egv1a1.GzipCompressor) *gzipv3.Gzip {
 		gzipProto.ChunkSize = wrapperspb.UInt32(*gzip.ChunkSize)
 	}
 
-	return gzipProto
+	return gzipProto, nil
 }
 
 var brotliEncoderModes = map[egv1a1.BrotliEncoderMode]brotliv3.Brotli_EncoderMode{
@@ -197,17 +242,21 @@ var brotliEncoderModes = map[egv1a1.BrotliEncoderMode]brotliv3.Brotli_EncoderMod
 }
 
 // buildBrotliProto builds the Brotli compressor library config from the API config.
-func buildBrotliProto(brotli *egv1a1.BrotliCompressor) *brotliv3.Brotli {
+func buildBrotliProto(brotli *egv1a1.BrotliCompressor) (*brotliv3.Brotli, error) {
 	brotliProto := &brotliv3.Brotli{}
 	if brotli == nil {
-		return brotliProto
+		return brotliProto, nil
 	}
 
 	if brotli.Quality != nil {
 		brotliProto.Quality = wrapperspb.UInt32(*brotli.Quality)
 	}
 	if brotli.EncoderMode != nil {
-		brotliProto.EncoderMode = brotliEncoderModes[*brotli.EncoderMode]
+		mode, ok := brotliEncoderModes[*brotli.EncoderMode]
+		if !ok {
+			return nil, fmt.Errorf("unknown brotli encoder mode: %q", *brotli.EncoderMode)
+		}
+		brotliProto.EncoderMode = mode
 	}
 	if brotli.WindowBits != nil {
 		brotliProto.WindowBits = wrapperspb.UInt32(*brotli.WindowBits)
@@ -222,7 +271,7 @@ func buildBrotliProto(brotli *egv1a1.BrotliCompressor) *brotliv3.Brotli {
 		brotliProto.DisableLiteralContextModeling = *brotli.DisableLiteralContextModeling
 	}
 
-	return brotliProto
+	return brotliProto, nil
 }
 
 var zstdStrategies = map[egv1a1.ZstdCompressionStrategy]zstdv3.Zstd_Strategy{
@@ -239,10 +288,10 @@ var zstdStrategies = map[egv1a1.ZstdCompressionStrategy]zstdv3.Zstd_Strategy{
 }
 
 // buildZstdProto builds the Zstd compressor library config from the API config.
-func buildZstdProto(zstd *egv1a1.ZstdCompressor) *zstdv3.Zstd {
+func buildZstdProto(zstd *egv1a1.ZstdCompressor) (*zstdv3.Zstd, error) {
 	zstdProto := &zstdv3.Zstd{}
 	if zstd == nil {
-		return zstdProto
+		return zstdProto, nil
 	}
 
 	if zstd.CompressionLevel != nil {
@@ -252,13 +301,17 @@ func buildZstdProto(zstd *egv1a1.ZstdCompressor) *zstdv3.Zstd {
 		zstdProto.EnableChecksum = *zstd.EnableChecksum
 	}
 	if zstd.Strategy != nil {
-		zstdProto.Strategy = zstdStrategies[*zstd.Strategy]
+		strategy, ok := zstdStrategies[*zstd.Strategy]
+		if !ok {
+			return nil, fmt.Errorf("unknown zstd strategy: %q", *zstd.Strategy)
+		}
+		zstdProto.Strategy = strategy
 	}
 	if zstd.ChunkSize != nil {
 		zstdProto.ChunkSize = wrapperspb.UInt32(*zstd.ChunkSize)
 	}
 
-	return zstdProto
+	return zstdProto, nil
 }
 
 func (*compressor) patchResources(*types.ResourceVersionTable, []*ir.HTTPRoute) error {
@@ -286,10 +339,7 @@ func (*compressor) patchRoute(route *routev3.Route, irRoute *ir.HTTPRoute, _ *ir
 
 	compressorProto := compressorPerRouteConfig()
 	for _, irComp := range irRoute.Traffic.Compression {
-		filterName, err := compressorFilterName(irComp)
-		if err != nil {
-			return err
-		}
+		filterName := compressorFilterName(irComp)
 		if _, ok := perFilterCfg[filterName]; ok {
 			// This should not happen since this is the only place where the filter
 			// config is added in a route.

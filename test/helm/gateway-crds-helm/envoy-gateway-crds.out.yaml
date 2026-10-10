@@ -967,6 +967,7 @@ spec:
                             The higher the quality, the slower the compression. If not set, defaults to 3.
                           format: int32
                           maximum: 11
+                          minimum: 0
                           type: integer
                         windowBits:
                           description: |-
@@ -1151,6 +1152,7 @@ spec:
                             The higher the quality, the slower the compression. If not set, defaults to 3.
                           format: int32
                           maximum: 11
+                          minimum: 0
                           type: integer
                         windowBits:
                           description: |-
@@ -26136,6 +26138,7 @@ spec:
                                       The higher the quality, the slower the compression. If not set, defaults to 3.
                                     format: int32
                                     maximum: 11
+                                    minimum: 0
                                     type: integer
                                   windowBits:
                                     description: |-

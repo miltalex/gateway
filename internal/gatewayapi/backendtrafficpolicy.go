@@ -1780,6 +1780,11 @@ func (t *Translator) buildTrafficFeatures(policy *egv1a1.BackendTrafficPolicy, o
 		errs = errors.Join(errs, err)
 	}
 
+	if err = validateCompression(policy.Spec.Compression, policy.Spec.Compressor); err != nil {
+		err = perr.WithMessage(err, "Compressor")
+		errs = errors.Join(errs, err)
+	}
+
 	cp = buildCompression(policy.Spec.Compression, policy.Spec.Compressor)
 	httpUpgrade = buildHTTPProtocolUpgradeConfig(policy.Spec.HTTPUpgrade)
 	if rb != nil && len(httpUpgrade) > 0 {
@@ -2816,6 +2821,47 @@ func defaultResponseOverrideRuleName(policy *egv1a1.BackendTrafficPolicy, index 
 		strconv.Itoa(index))
 }
 
+// validateCompression ensures that only the compressor settings block matching
+// the compressor type is set. A block for a different compressor type would
+// otherwise be silently ignored.
+func validateCompression(compression, compressor []*egv1a1.Compression) error {
+	for _, c := range append(append([]*egv1a1.Compression{}, compressor...), compression...) {
+		if c == nil {
+			continue
+		}
+		if c.Gzip != nil && c.Type != egv1a1.GzipCompressorType {
+			return fmt.Errorf("gzip settings can only be set when type is %q", egv1a1.GzipCompressorType)
+		}
+		if c.Brotli != nil && c.Type != egv1a1.BrotliCompressorType {
+			return fmt.Errorf("brotli settings can only be set when type is %q", egv1a1.BrotliCompressorType)
+		}
+		if c.Zstd != nil && c.Type != egv1a1.ZstdCompressorType {
+			return fmt.Errorf("zstd settings can only be set when type is %q", egv1a1.ZstdCompressorType)
+		}
+	}
+	return nil
+}
+
+// applyCompressorSettings copies the settings block matching the compressor type
+// into the IR, deep-copying it so the IR does not alias the BackendTrafficPolicy
+// spec. Settings blocks for a different compressor type are ignored.
+func applyCompressorSettings(c *egv1a1.Compression, irCompression *ir.Compression) {
+	switch c.Type {
+	case egv1a1.GzipCompressorType:
+		if c.Gzip != nil {
+			irCompression.Gzip = c.Gzip.DeepCopy()
+		}
+	case egv1a1.BrotliCompressorType:
+		if c.Brotli != nil {
+			irCompression.Brotli = c.Brotli.DeepCopy()
+		}
+	case egv1a1.ZstdCompressorType:
+		if c.Zstd != nil {
+			irCompression.Zstd = c.Zstd.DeepCopy()
+		}
+	}
+}
+
 func buildCompression(compression, compressor []*egv1a1.Compression) []*ir.Compression {
 	// Handle the Compressor field first (higher priority)
 	if len(compressor) > 0 {
@@ -2828,10 +2874,8 @@ func buildCompression(compression, compressor []*egv1a1.Compression) []*ir.Compr
 				irCompression := ir.Compression{
 					Type:        c.Type,
 					ChooseFirst: i == 0, // only the first compressor is marked as ChooseFirst
-					Gzip:        c.Gzip,
-					Brotli:      c.Brotli,
-					Zstd:        c.Zstd,
 				}
+				applyCompressorSettings(c, &irCompression)
 				if c.MinContentLength != nil {
 					minContentLength, ok := c.MinContentLength.AsInt64()
 					if ok {
@@ -2853,10 +2897,8 @@ func buildCompression(compression, compressor []*egv1a1.Compression) []*ir.Compr
 		irCompression := ir.Compression{
 			Type:        c.Type,
 			ChooseFirst: i == 0, // only the first compressor is marked as ChooseFirst
-			Gzip:        c.Gzip,
-			Brotli:      c.Brotli,
-			Zstd:        c.Zstd,
 		}
+		applyCompressorSettings(c, &irCompression)
 		if c.MinContentLength != nil {
 			minContentLength, ok := c.MinContentLength.AsInt64()
 			if ok {

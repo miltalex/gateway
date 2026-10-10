@@ -15,23 +15,7 @@
           maxConcurrentStreams: 100
         httpFilters:
         - disabled: true
-          name: envoy.filters.http.compressor.gzip/323f3e9b
-          typedConfig:
-            '@type': type.googleapis.com/envoy.extensions.filters.http.compressor.v3.Compressor
-            compressorLibrary:
-              name: envoy.compression.gzip.compressor
-              typedConfig:
-                '@type': type.googleapis.com/envoy.extensions.compression.gzip.compressor.v3.Gzip
-                chunkSize: 8192
-                compressionLevel: COMPRESSION_LEVEL_9
-                compressionStrategy: FIXED
-                memoryLevel: 8
-                windowBits: 15
-            responseDirectionConfig:
-              commonConfig:
-                minContentLength: 200
-        - disabled: true
-          name: envoy.filters.http.compressor.gzip/63b70d49
+          name: envoy.filters.http.compressor.gzip/1a78afaa0c34a199
           typedConfig:
             '@type': type.googleapis.com/envoy.extensions.filters.http.compressor.v3.Compressor
             compressorLibrary:
@@ -46,6 +30,22 @@
             responseDirectionConfig:
               commonConfig:
                 minContentLength: 100
+        - disabled: true
+          name: envoy.filters.http.compressor.gzip/dfb2099942df0eef
+          typedConfig:
+            '@type': type.googleapis.com/envoy.extensions.filters.http.compressor.v3.Compressor
+            compressorLibrary:
+              name: envoy.compression.gzip.compressor
+              typedConfig:
+                '@type': type.googleapis.com/envoy.extensions.compression.gzip.compressor.v3.Gzip
+                chunkSize: 8192
+                compressionLevel: COMPRESSION_LEVEL_9
+                compressionStrategy: FIXED
+                memoryLevel: 8
+                windowBits: 15
+            responseDirectionConfig:
+              commonConfig:
+                minContentLength: 200
         - name: envoy.filters.http.router
           typedConfig:
             '@type': type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
